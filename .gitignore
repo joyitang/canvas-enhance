@@ -1,0 +1,17 @@
+node_modules/
+.DS_Store
+
+# 构建产物：main.js 会入库，方便直接安装；sourcemap 不入库
+main.js.map
+
+# 本地调试/测试产物
+.jce-test/
+.legacy/
+.recon/
+.testvault/
+.testuserdata/
+.tv/
+.tu/
+
+# Obsidian 运行时写入的插件数据
+data.json

@@ -1,0 +1,401 @@
+/* Canvas 增强 — visual layer.
+ * Everything is scoped under .jce-* or a canvas node class so the rest of
+ * Obsidian is untouched. */
+
+:root {
+  --jce-accent: #6b8fbf;
+  --jce-accent-soft: rgba(107, 143, 191, 0.16);
+  --jce-line: #b3b3ac;
+  --jce-section-fill: #d8d8d8;
+  /* 画布底布：沿用 0.2.0 的浅灰（PRD SEC-02 也以 #eeeded 作为画布底基准） */
+  --jce-canvas-bg: #eeeded;
+  --jce-card-radius: 10px;
+}
+
+/* ------------------------------------------------------------------ 底布
+ * 沿用 0.2.0：把画布底刷成浅灰 #eeeded，盖住主题默认底色；
+ * 点阵仍由 Obsidian 自己的 .canvas-background 画在这层之上。
+ */
+
+.canvas-wrapper,
+.workspace-leaf-content[data-type="canvas"] .view-content {
+  background: var(--jce-canvas-bg, #eeeded);
+}
+
+/* ---------------------------------------------------------------- toolbar */
+
+.jce-toolbar {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.13);
+  pointer-events: auto;
+}
+
+.jce-toolbar .jce-tool {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  box-shadow: none;
+}
+
+.jce-toolbar .jce-tool:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.jce-toolbar .jce-tool.is-active {
+  background: var(--jce-accent-soft);
+  color: var(--jce-accent);
+}
+
+.jce-toolbar .jce-tool-sep {
+  height: 1px;
+  margin: 3px 4px;
+  background: var(--background-modifier-border);
+}
+
+/* Section sits directly below Mindmap (PRD 4.2 wording preserved). */
+.jce-toolbar .jce-tool[data-tool="section"] {
+  margin-top: 0;
+}
+
+/* ------------------------------------------------------------- format bar */
+
+.jce-format-bar {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.jce-format-bar[hidden] {
+  display: none !important;
+}
+
+.jce-format-row {
+  display: flex;
+  gap: 1px;
+}
+
+.jce-format-btn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+}
+
+.jce-format-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.jce-format-btn.is-on {
+  color: var(--jce-accent);
+}
+
+.jce-format-pop {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  align-items: center;
+}
+
+.jce-format-pop[hidden] {
+  display: none !important;
+}
+
+.jce-format-input {
+  width: 190px;
+  height: 26px;
+  font-size: 12px;
+}
+
+.jce-format-apply {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.jce-format-swatches {
+  flex-wrap: wrap;
+  max-width: 190px;
+}
+
+.jce-swatch {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.jce-swatch.is-clear {
+  background: var(--background-primary);
+  position: relative;
+}
+
+.jce-swatch.is-clear::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-top: 1px solid var(--text-faint);
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+
+/* ------------------------------------------------------------ mindmap node
+ * PRD MM-01/MM-02: a fully transparent fixed rectangle. No inner white block,
+ * no double frame; one frame only while selected or editing.
+ */
+
+.canvas-wrapper .canvas-node.jce-mindmap {
+  --canvas-color: transparent;
+  --background-primary: transparent;
+  --background-primary-alt: transparent;
+  --background-secondary: transparent;
+  --background-modifier-form-field: transparent;
+  --code-background: transparent;
+  --embed-background: transparent;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap > .canvas-node-container {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border: 1.5px solid transparent !important;
+  border-radius: 10px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap:is(.is-focused, .is-selected, .is-editing, .mod-selected, .mod-focused)
+  > .canvas-node-container {
+  border-color: var(--jce-accent) !important;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap .canvas-node-content,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-embed,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-embed-content,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-view,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-sizer,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-section {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap .canvas-node-content {
+  width: 100%;
+  height: 100%;
+  padding: 6px 10px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-embed-content,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-view,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-sizer {
+  width: 100%;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: visible;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-section,
+.canvas-wrapper .canvas-node.jce-mindmap .markdown-preview-section > div {
+  width: 100%;
+  text-align: center;
+}
+
+.canvas-wrapper .canvas-node.jce-mindmap iframe {
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+/* Native chrome that MM-08 requires us to replace. */
+.canvas-wrapper .canvas-node.jce-mindmap .canvas-node-resizer,
+.canvas-wrapper .canvas-node.jce-mindmap .canvas-node-connection-point,
+.canvas-wrapper .canvas-node.jce-mindmap .canvas-node-connection-point * {
+  display: none !important;
+}
+
+.canvas-wrapper.jce-mm-selected .canvas-menu-container {
+  display: none !important;
+}
+
+.canvas-wrapper .canvas-node.jce-folded {
+  display: none !important;
+}
+
+.canvas-wrapper .canvas-node.jce-mm-hidden {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------- note card
+ * PRD NOTE-01..04: soft tinted card, kept distinct from plain Text.
+ */
+
+.canvas-wrapper .canvas-node.jce-note > .canvas-node-container {
+  background: var(--jce-note-bg, #fbf7ee) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06) !important;
+  padding: 14px 16px;
+}
+
+.canvas-wrapper .canvas-node.jce-note .canvas-node-content {
+  background: transparent !important;
+}
+
+.canvas-wrapper .canvas-node.jce-note .markdown-embed,
+.canvas-wrapper .canvas-node.jce-note .markdown-preview-view {
+  background: transparent !important;
+}
+
+/* ------------------------------------------------------------------- text
+ * PRD TEXT-03: light frame, white fill — not a grey/green block.
+ */
+
+.canvas-wrapper .canvas-node.jce-text > .canvas-node-container {
+  background: var(--background-primary) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+  padding: 8px 10px;
+}
+
+.canvas-wrapper .canvas-node.jce-text .canvas-node-content,
+.canvas-wrapper .canvas-node.jce-text .markdown-preview-view {
+  background: transparent !important;
+}
+
+/* ---------------------------------------------------------------- section
+ * PRD SEC-02: solid #d8d8d8, different from the #eeeded canvas background;
+ * the label shares the fill so nothing shows through.
+ */
+
+.canvas-wrapper .canvas-node.jce-section:not(.jce-section-tinted) > .canvas-node-container {
+  background: var(--jce-section-fill) !important;
+  background-color: var(--jce-section-fill) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+
+.canvas-wrapper .canvas-node.jce-section:not(.jce-section-tinted) > .canvas-group-label {
+  background: var(--jce-section-fill) !important;
+  background-color: var(--jce-section-fill) !important;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* --------------------------------------------------------------- overlay */
+
+.jce-overlay {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.jce-overlay .jce-mm-path {
+  fill: none;
+  stroke: var(--jce-line);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.jce-overlay .jce-mm-arrow {
+  fill: var(--jce-line);
+  stroke: none;
+}
+
+.canvas-wrapper .jce-hide-native {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------ interaction */
+
+.canvas-wrapper.jce-placing {
+  cursor: crosshair;
+}
+
+.canvas-wrapper.jce-placing .canvas-node {
+  cursor: crosshair;
+}
+
+.canvas-wrapper.jce-connecting .canvas-node {
+  cursor: crosshair;
+}
+
+.canvas-wrapper .canvas-node.jce-connect-from > .canvas-node-container {
+  border-color: var(--jce-accent) !important;
+  box-shadow: 0 0 0 2px var(--jce-accent-soft) !important;
+}
+
+/* Fold indicator on folded mindmap nodes. */
+.canvas-wrapper .canvas-node.jce-mindmap.jce-has-fold > .canvas-node-container::after {
+  content: "";
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--jce-line);
+  box-shadow: 0 0 0 2px var(--background-primary);
+}

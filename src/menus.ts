@@ -1,0 +1,189 @@
+/**
+ * menus.ts — blank-area creation menu and object context menu (PRD §7).
+ *
+ * MENU-02 matters most: when a menu is open, clicking blank space must only
+ * close the menu. We swallow that pointerdown in the capture phase before it
+ * can reach the canvas drag/pan handler, and close the menu ourselves so the
+ * behaviour does not depend on Obsidian's dismissal timing.
+ */
+
+import { Menu, type Plugin } from "obsidian";
+import { CanvasLike, NodeLike, Point, isInsideCanvasUi } from "./bridge";
+import { MENU, TOOLS, menuLabel } from "./copy";
+import { Kind, hasChildren, isFolded, isMindmap } from "./model";
+
+type Handlers = {
+  create: (canvas: CanvasLike, kind: Kind, at?: Point) => void;
+  remove: (canvas: CanvasLike, nodeId: string) => void;
+  setColor: (canvas: CanvasLike, nodeId: string, color: string) => void;
+  rotate: (canvas: CanvasLike, nodeId: string) => void;
+  setFolded: (canvas: CanvasLike, nodeId: string, folded: boolean) => void;
+};
+
+const PALETTE: { id: string; label: string; swatch: string }[] = [
+  { id: "", label: "默认 / Default", swatch: "#d8d8d8" },
+  { id: "1", label: "红 / Red", swatch: "#fb464c" },
+  { id: "2", label: "橙 / Orange", swatch: "#e9973f" },
+  { id: "3", label: "黄 / Yellow", swatch: "#e0de71" },
+  { id: "4", label: "绿 / Green", swatch: "#44cf6e" },
+  { id: "5", label: "青 / Cyan", swatch: "#53c9e1" },
+  { id: "6", label: "紫 / Purple", swatch: "#a882ff" },
+];
+
+const CREATE_ORDER: Kind[] = ["note", "text", "mindmap", "section"];
+
+export class ContextMenus {
+  private open: Menu | null = null;
+  private closedAt = 0;
+
+  constructor(
+    private plugin: Plugin,
+    private handlers: Handlers
+  ) {
+    this.plugin.registerDomEvent(
+      document,
+      "pointerdown",
+      (evt: PointerEvent) => this.onPointerDown(evt),
+      true
+    );
+    this.plugin.registerDomEvent(
+      document,
+      "contextmenu",
+      (evt: MouseEvent) => this.onContextMenu(evt),
+      true
+    );
+  }
+
+  private get menuOpen(): boolean {
+    return !!this.open;
+  }
+
+  private onPointerDown(evt: PointerEvent): void {
+    const target = evt.target as Element | null;
+    if (this.open) {
+      // Clicking inside the menu is the menu's business.
+      if (target?.closest?.(".menu")) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      this.hide();
+      return;
+    }
+    if (Date.now() - this.closedAt < 150) {
+      // Swallow the very next press after a dismissal (MENU-02).
+      evt.preventDefault();
+      evt.stopPropagation();
+    }
+  }
+
+  private hide(): void {
+    this.open?.hide();
+    this.open = null;
+    this.closedAt = Date.now();
+  }
+
+  private onContextMenu(evt: MouseEvent): void {
+    const target = evt.target as Element | null;
+    if (isInsideCanvasUi(target)) return;
+    const wrapper = target?.closest?.(".canvas-wrapper");
+    if (!(wrapper instanceof HTMLElement)) return;
+    const canvas = canvasFromWrapper(this.plugin, wrapper);
+    if (!canvas) return;
+
+    evt.preventDefault();
+    evt.stopPropagation();
+    this.hide();
+
+    const node = nodeFromWrapper(canvas, target);
+    const menu = new Menu();
+    if (node) this.buildObjectMenu(menu, canvas, node);
+    else this.buildBlankMenu(menu, canvas, canvas.posFromEvt(evt));
+
+    this.open = menu;
+    menu.onHide(() => {
+      if (this.open === menu) this.open = null;
+      this.closedAt = Date.now();
+    });
+    menu.showAtMouseEvent(evt);
+  }
+
+  private buildBlankMenu(menu: Menu, canvas: CanvasLike, at: Point): void {
+    for (const kind of CREATE_ORDER) {
+      const meta = TOOLS[kind];
+      menu.addItem((item) =>
+        item
+          .setTitle(menuLabel(meta))
+          .setIcon(ICON_FOR[kind])
+          .onClick(() => this.handlers.create(canvas, kind, at))
+      );
+    }
+  }
+
+  private buildObjectMenu(menu: Menu, canvas: CanvasLike, node: NodeLike): void {
+    menu.addItem((item) => {
+      item.setTitle(menuLabel(MENU.color)).setIcon("palette");
+      // `setSubmenu` is real but undocumented (absent from the public typings),
+      // so fall back to flat items where it is unavailable.
+      const sub = (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
+      const target: Menu = sub ?? menu;
+      for (const color of PALETTE) {
+        target.addItem((row) =>
+          row
+            .setTitle(color.label)
+            .setChecked((node.color ?? "") === color.id)
+            .onClick(() => this.handlers.setColor(canvas, node.id, color.id))
+        );
+      }
+    });
+
+    menu.addItem((item) =>
+      item
+        .setTitle(menuLabel(MENU.remove))
+        .setIcon("trash")
+        .onClick(() => this.handlers.remove(canvas, node.id))
+    );
+
+    if (isMindmap(node)) {
+      if (hasChildren(canvas, node.id)) {
+        const folded = isFolded(canvas, node.id);
+        const item = folded ? MENU.unfold : MENU.fold;
+        menu.addItem((row) =>
+          row
+            .setTitle(menuLabel(item))
+            .setIcon(folded ? "chevrons-down-up" : "chevrons-up-down")
+            .onClick(() => this.handlers.setFolded(canvas, node.id, !folded))
+        );
+      }
+      menu.addItem((row) =>
+        row
+          .setTitle(menuLabel(MENU.rotate))
+          .setIcon("rotate-cw")
+          .onClick(() => this.handlers.rotate(canvas, node.id))
+      );
+    }
+  }
+}
+
+const ICON_FOR: Record<Kind, string> = {
+  note: "sticky-note",
+  text: "type",
+  mindmap: "network",
+  section: "frame",
+};
+
+function canvasFromWrapper(plugin: Plugin, wrapper: HTMLElement): CanvasLike | null {
+  for (const leaf of plugin.app.workspace.getLeavesOfType("canvas")) {
+    const view = leaf.view as { canvas?: CanvasLike };
+    if (view.canvas?.wrapperEl === wrapper) return view.canvas;
+  }
+  const active = plugin.app.workspace.activeLeaf?.view as { canvas?: CanvasLike } | undefined;
+  return active?.canvas ?? null;
+}
+
+function nodeFromWrapper(canvas: CanvasLike, target: Element | null): NodeLike | null {
+  const el = target?.closest?.(".canvas-node");
+  if (!(el instanceof HTMLElement)) return null;
+  for (const node of canvas.nodes.values()) {
+    if (node.nodeEl === el || node.nodeEl.contains(el) || el.contains(node.nodeEl)) return node;
+  }
+  return null;
+}
