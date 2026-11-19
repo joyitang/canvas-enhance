@@ -24,7 +24,7 @@ __export(main_exports, {
   default: () => CanvasEnhancePlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/bridge.ts
 var edgeCtors = /* @__PURE__ */ new WeakMap();
@@ -146,6 +146,22 @@ var TAG = "jce";
 var ROOT = "jceRoot";
 var LAYOUT = "jceLayout";
 var FOLD = "jceFold";
+var CARD_BG = "jceBg";
+var CARD_BG_PALETTE = [
+  { value: "", zh: "\u9ED8\u8BA4", en: "Default" },
+  { value: "#ffffff", zh: "\u767D", en: "White" },
+  { value: "#fbf7ee", zh: "\u5976\u6CB9", en: "Cream" },
+  { value: "#fbf1c4", zh: "\u9EC4", en: "Yellow" },
+  { value: "#e3f1d9", zh: "\u7EFF", en: "Green" },
+  { value: "#dfeaf7", zh: "\u84DD", en: "Blue" },
+  { value: "#f8e1e4", zh: "\u7C89", en: "Pink" },
+  { value: "#ece5f7", zh: "\u7D2B", en: "Purple" },
+  { value: "#eeeeee", zh: "\u7070", en: "Grey" }
+];
+function cardBgOf(node) {
+  const value = dataOf(node)[CARD_BG];
+  return typeof value === "string" ? value : "";
+}
 var LAYOUT_ORDER = ["TB", "LR", "BT", "RL"];
 function dataOf(node) {
   return node.getData();
@@ -482,7 +498,7 @@ function pointsOf(seg) {
 // src/chrome.ts
 var KIND_CLASSES = ["jce-note", "jce-text", "jce-mindmap", "jce-section"];
 var IFRAME_STYLE_ID = "jce-iframe-style";
-var MINDMAP_IFRAME_CSS = `
+var BASE_IFRAME_CSS = `
 html, body {
   background: transparent !important;
   background-color: transparent !important;
@@ -498,6 +514,7 @@ html, body {
   --embed-background: transparent !important;
   --canvas-color: transparent !important;
 }
+
 .markdown-source-view, .markdown-reading-view, .markdown-preview-view,
 .cm-editor, .cm-scroller, .cm-content, .cm-contentContainer, .cm-line,
 .markdown-embed, .markdown-embed-content {
@@ -507,9 +524,33 @@ html, body {
   border: none !important;
 }
 .cm-editor { height: 100% !important; }
+.cm-scroller { font-size: var(--font-text-size, 16px); }
+/* Obsidian reveals the == markers for about a second after the selection
+ * changes, which reads as "my highlight turned into source code". The card is
+ * WYSIWYG here: the markers stay hidden, toggling H off works from the
+ * surrounding characters. */
+.cm-formatting-highlight { display: none !important; }
+/* Completed tasks read the same in the editor as in the preview. */
+.cm-line.HyperMD-task-line[data-task="x"],
+.cm-line.HyperMD-task-line[data-task="X"] {
+  color: var(--text-faint) !important;
+  text-decoration: line-through !important;
+  text-decoration-thickness: 1px;
+}
+`;
+var HIGHLIGHT_IFRAME_CSS = `
+.cm-formatting-highlight { display: none !important; }
+.cm-line.HyperMD-task-line[data-task="x"],
+.cm-line.HyperMD-task-line[data-task="X"] {
+  color: var(--text-faint) !important;
+  text-decoration: line-through !important;
+  text-decoration-thickness: 1px;
+}
+`;
+var MINDMAP_IFRAME_CSS = `
+${BASE_IFRAME_CSS}
 .cm-scroller {
   overflow: hidden !important;
-  font-size: var(--font-text-size, 16px);
 }
 .cm-content {
   text-align: center !important;
@@ -572,6 +613,7 @@ var Chrome = class {
           Math.round(node.width),
           Math.round(node.height),
           node.color ?? "",
+          cardBgOf(node),
           isEditing(node) ? "e" : "",
           node.getData().jceFold === true ? "f" : ""
         ].join(":")
@@ -614,23 +656,29 @@ var Chrome = class {
       el.classList.add("jce-node", `jce-${kind}`);
       el.classList.toggle("jce-section-tinted", kind === "section" && !!node.color);
     }
+    const bg = kind === "note" ? cardBgOf(node) : "";
+    if (bg && /^#[0-9a-f]{3,8}$/i.test(bg)) el.style.setProperty("--jce-note-bg", bg);
+    else el.style.removeProperty("--jce-note-bg");
   }
   /** Editing happens inside a same-origin iframe that Obsidian recreates each
-   *  time; paint it on every appearance. */
+   *  time; paint it on every appearance. Note cards need the white block to go
+   *  away as well, otherwise the chosen card colour is hidden while editing. */
   paintFrames(canvas, mmIds) {
     for (const node of allNodes(canvas)) {
-      if (!mmIds.has(node.id)) continue;
+      const mindmap = mmIds.has(node.id);
+      const note = kindOf(node) === "note";
+      const css = mindmap ? MINDMAP_IFRAME_CSS : note ? BASE_IFRAME_CSS : HIGHLIGHT_IFRAME_CSS;
       const frames = node.nodeEl.querySelectorAll("iframe");
       frames.forEach((frame) => {
-        this.paintFrame(frame);
+        this.paintFrame(frame, css);
         if (!this.paintedFrames.has(frame)) {
           this.paintedFrames.add(frame);
-          frame.addEventListener("load", () => this.paintFrame(frame));
+          frame.addEventListener("load", () => this.paintFrame(frame, css));
         }
       });
     }
   }
-  paintFrame(frame) {
+  paintFrame(frame, css) {
     let doc = null;
     try {
       doc = frame.contentDocument;
@@ -644,7 +692,7 @@ var Chrome = class {
       style.id = IFRAME_STYLE_ID;
       (doc.head ?? doc.documentElement).appendChild(style);
     }
-    if (style.textContent !== MINDMAP_IFRAME_CSS) style.textContent = MINDMAP_IFRAME_CSS;
+    if (style.textContent !== css) style.textContent = css;
   }
 };
 
@@ -707,17 +755,18 @@ var ConnectTool = class {
 
 // src/format.ts
 var import_view = require("@codemirror/view");
+var import_obsidian = require("obsidian");
 var BUTTONS = [
-  { id: "bold", glyph: "B", label: "\u7C97\u4F53 / Bold" },
-  { id: "italic", glyph: "I", label: "\u659C\u4F53 / Italic" },
-  { id: "underline", glyph: "U", label: "\u4E0B\u5212\u7EBF / Underline" },
-  { id: "code", glyph: "</>", label: "\u884C\u5185\u4EE3\u7801 / Inline code" },
-  { id: "highlight", glyph: "H", label: "\u9AD8\u4EAE / Highlight" },
-  { id: "strike", glyph: "S", label: "\u5220\u9664\u7EBF / Strikethrough" },
-  { id: "link", glyph: "\u2197", label: "\u94FE\u63A5 / Link" },
-  { id: "math", glyph: "\u2211", label: "\u6570\u5B66 / Math" },
-  { id: "color", glyph: "A", label: "\u6587\u5B57\u989C\u8272 / Text color" },
-  { id: "bg", glyph: "\u25A7", label: "\u80CC\u666F\u8272 / Background color" }
+  { id: "bold", glyph: "B", label: "\u7C97\u4F53 / Bold  \u2318B", group: 0 },
+  { id: "italic", glyph: "I", label: "\u659C\u4F53 / Italic  \u2318I", group: 0 },
+  { id: "underline", glyph: "U", label: "\u4E0B\u5212\u7EBF / Underline  \u2318U", group: 0 },
+  { id: "code", glyph: "</>", label: "\u884C\u5185\u4EE3\u7801 / Inline code", group: 1 },
+  { id: "highlight", glyph: "H", label: "\u9AD8\u4EAE / Highlight", group: 1 },
+  { id: "strike", glyph: "S", label: "\u5220\u9664\u7EBF / Strikethrough", group: 0 },
+  { id: "link", glyph: "\u2197", label: "\u94FE\u63A5 / Link  \u2318K", group: 2 },
+  { id: "math", glyph: "\u2211", label: "\u6570\u5B66 / Math", group: 2 },
+  { id: "color", glyph: "A", label: "\u6587\u5B57\u989C\u8272 / Text color", group: 3 },
+  { id: "bg", glyph: "", label: "\u6587\u5B57\u80CC\u666F\u8272 / Background color", group: 3 }
 ];
 var TEXT_COLORS = ["#111111", "#6b6b6b", "#c0392b", "#d35400", "#1e8449", "#1a5276", "#6c3483"];
 var BG_COLORS = ["#f7e89c", "#c8efc4", "#c5e4f7", "#f5c6d0", "#e4e4e4"];
@@ -734,7 +783,7 @@ var FormatBar = class {
     this.colorBox.className = "jce-format-pop jce-format-swatches";
     this.colorBox.hidden = true;
     this.linkBox = document.createElement("div");
-    this.linkBox.className = "jce-format-pop";
+    this.linkBox.className = "jce-format-pop jce-format-link";
     this.linkBox.hidden = true;
     this.linkInput = document.createElement("input");
     this.build();
@@ -753,14 +802,29 @@ var FormatBar = class {
   build() {
     const row = document.createElement("div");
     row.className = "jce-format-row";
+    let group = -1;
     for (const btn of BUTTONS) {
+      if (group !== -1 && btn.group !== group) {
+        const sep = document.createElement("span");
+        sep.className = "jce-format-sep";
+        row.appendChild(sep);
+      }
+      group = btn.group;
       const el = document.createElement("button");
       el.type = "button";
-      el.className = "jce-format-btn";
+      el.className = `jce-format-btn jce-fmt-${btn.id}`;
       el.dataset.fmt = btn.id;
       el.title = btn.label;
       el.setAttribute("aria-label", btn.label);
-      el.textContent = btn.glyph;
+      if (btn.id === "bg") {
+        el.classList.add("jce-fmt-icon");
+        (0, import_obsidian.setIcon)(el, "paint-bucket");
+      } else {
+        const glyph = document.createElement("span");
+        glyph.className = `jce-fmt-glyph jce-fmt-glyph-${btn.id}`;
+        glyph.textContent = btn.glyph;
+        el.appendChild(glyph);
+      }
       el.addEventListener("mousedown", (evt) => evt.preventDefault());
       el.addEventListener("click", (evt) => {
         evt.preventDefault();
@@ -822,18 +886,15 @@ var FormatBar = class {
       if (!selection || selection.isCollapsed || !selection.toString().trim()) continue;
       const content = doc.querySelector(".cm-content");
       if (!content) continue;
-      const view2 = findView(content);
-      if (view2 && !view2.state.selection.main.empty) return { view: view2, frame };
+      const view = findView(content);
+      if (view && !view.state.selection.main.empty) return { view, frame };
     }
-    const active = document.activeElement;
-    const view = active instanceof HTMLElement ? findView(active) : null;
-    if (view && !view.state.selection.main.empty) return { view, frame: null };
     return null;
   }
   frames() {
     const canvas = this.activeCanvas();
-    const root = canvas?.canvasEl ?? document;
-    return Array.from(root.querySelectorAll(".canvas-node iframe"));
+    if (!canvas) return [];
+    return Array.from(canvas.canvasEl.querySelectorAll(".canvas-node iframe"));
   }
   activeCanvas() {
     const view = this.plugin.app.workspace.activeLeaf?.view;
@@ -897,11 +958,13 @@ var FormatBar = class {
   place(rect) {
     const width = this.el.offsetWidth;
     const height = this.el.offsetHeight;
-    const left = Math.min(
-      window.innerWidth - width - 8,
-      Math.max(8, rect.left + rect.width / 2 - width / 2)
-    );
-    const top = Math.max(8, rect.top - height - 8);
+    const canvas = this.activeCanvas();
+    const leftEdge = canvas ? canvas.wrapperEl.getBoundingClientRect().left : 0;
+    const minLeft = leftEdge > 0 ? leftEdge + 76 : 8;
+    const centered = rect.left + rect.width / 2 - width / 2;
+    const left = Math.min(window.innerWidth - width - 8, Math.max(minLeft, centered));
+    let top = rect.top - height - 8;
+    if (top < 8) top = Math.min(window.innerHeight - height - 8, rect.bottom + 8);
     this.el.style.left = `${Math.round(left)}px`;
     this.el.style.top = `${Math.round(top)}px`;
   }
@@ -1003,12 +1066,7 @@ var FormatBar = class {
       swatch.addEventListener("click", (evt) => {
         evt.preventDefault();
         if (hex === "clear") clearStyle(target.view, kind === "color" ? "color" : "background-color");
-        else
-          wrapStyle(
-            target.view,
-            kind === "color" ? "color" : "background-color",
-            hex
-          );
+        else wrapStyle(target.view, kind === "color" ? "color" : "background-color", hex);
         this.colorBox.hidden = true;
         this.schedule();
       });
@@ -1025,26 +1083,72 @@ function findView(el) {
   return null;
 }
 function toggleWrap(view, left, right2) {
-  const main = view.state.selection.main;
-  const text = view.state.sliceDoc(main.from, main.to);
+  const { from, to } = view.state.selection.main;
+  const text = view.state.sliceDoc(from, to);
   if (!text) return;
-  if (text.length >= left.length + right2.length && text.startsWith(left) && text.endsWith(right2)) {
-    const inner = text.slice(left.length, text.length - right2.length);
-    view.dispatch({
-      changes: { from: main.from, to: main.to, insert: inner },
-      selection: { anchor: main.from, head: main.from + inner.length }
-    });
-  } else {
-    const insert = left + text + right2;
-    view.dispatch({
-      changes: { from: main.from, to: main.to, insert },
-      selection: {
-        anchor: main.from + left.length,
-        head: main.from + left.length + text.length
-      }
-    });
+  if (!text.includes("\n")) {
+    const caret2 = toggleRange(view, from, to, left, right2);
+    setCaret(view, caret2);
+    return;
   }
+  const first = view.state.doc.lineAt(from);
+  const last = view.state.doc.lineAt(to);
+  let caret = null;
+  for (let n = last.number; n >= first.number; n--) {
+    const line = view.state.doc.line(n);
+    const a = n === first.number ? Math.max(from, line.from) : line.from;
+    const b = n === last.number ? Math.min(to, line.to) : line.to;
+    if (!view.state.sliceDoc(a, b).trim()) continue;
+    const next = toggleRange(view, a, b, left, right2);
+    if (caret === null) caret = next;
+  }
+  setCaret(view, caret ?? to);
+}
+function setCaret(view, pos) {
+  const docLength = view.state.doc.length;
+  view.dispatch({ selection: { anchor: Math.max(0, Math.min(pos, docLength)) } });
   view.focus();
+}
+function toggleRange(view, from, to, left, right2) {
+  const text = view.state.sliceDoc(from, to);
+  const inner = unwrap(text, left, right2);
+  if (inner !== null) {
+    view.dispatch({ changes: { from, to, insert: inner } });
+    return from + inner.length;
+  }
+  if (isMarker(view, from - left.length, left, -1) && isMarker(view, to, right2, 1)) {
+    view.dispatch({
+      changes: [
+        { from: from - left.length, to: from, insert: "" },
+        { from: to, to: to + right2.length, insert: "" }
+      ]
+    });
+    return from - left.length + text.length;
+  }
+  const insert = left + text + right2;
+  view.dispatch({ changes: { from, to, insert } });
+  return from + insert.length;
+}
+function unwrap(text, left, right2) {
+  if (text.length <= left.length + right2.length) return null;
+  if (!text.startsWith(left) || !text.endsWith(right2)) return null;
+  return text.slice(left.length, text.length - right2.length);
+}
+function isMarker(view, pos, marker, dir) {
+  if (pos < 0) return false;
+  const docLength = view.state.doc.length;
+  if (dir < 0) {
+    if (pos + marker.length > docLength) return false;
+    if (view.state.sliceDoc(pos, pos + marker.length) !== marker) return false;
+    if (marker.length === 1 && pos > 0 && view.state.sliceDoc(pos - 1, pos) === marker) return false;
+    return true;
+  }
+  if (pos + marker.length > docLength) return false;
+  if (view.state.sliceDoc(pos, pos + marker.length) !== marker) return false;
+  if (marker.length === 1 && pos + 1 < docLength && view.state.sliceDoc(pos + 1, pos + 2) === marker) {
+    return false;
+  }
+  return true;
 }
 var stylePattern = (prop, value) => new RegExp(`^<span style="${prop}:\\s*${escapeRe(value)}\\s*">([\\s\\S]*)</span>$`);
 var anyStylePattern = (prop) => new RegExp(`^<span style="${prop}:\\s*[^"]+\\s*">([\\s\\S]*)</span>$`);
@@ -1052,28 +1156,52 @@ function wrapStyle(view, prop, value) {
   const main = view.state.selection.main;
   const text = view.state.sliceDoc(main.from, main.to);
   if (!text) return;
-  const same = text.match(stylePattern(prop, value));
-  if (same) {
-    view.dispatch({ changes: { from: main.from, to: main.to, insert: same[1] } });
-    view.focus();
-    return;
+  const lines = lineRanges(view, main.from, main.to);
+  let caret = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const { from, to } = lines[i];
+    const seg = view.state.sliceDoc(from, to);
+    if (!seg.trim()) continue;
+    const same = seg.match(stylePattern(prop, value));
+    if (same) {
+      view.dispatch({ changes: { from, to, insert: same[1] } });
+      if (caret === null) caret = from + same[1].length;
+      continue;
+    }
+    const existing = seg.match(anyStylePattern(prop));
+    const inner = existing ? existing[1] : seg;
+    const insert = `<span style="${prop}: ${value}">${inner}</span>`;
+    view.dispatch({ changes: { from, to, insert } });
+    if (caret === null) caret = from + insert.length;
   }
-  const existing = text.match(anyStylePattern(prop));
-  const inner = existing ? existing[1] : text;
-  const insert = `<span style="${prop}: ${value}">${inner}</span>`;
-  view.dispatch({
-    changes: { from: main.from, to: main.to, insert },
-    selection: { anchor: main.from + insert.length }
-  });
-  view.focus();
+  setCaret(view, caret ?? main.to);
 }
 function clearStyle(view, prop) {
   const main = view.state.selection.main;
-  const text = view.state.sliceDoc(main.from, main.to);
-  const existing = text.match(anyStylePattern(prop));
-  if (!existing) return;
-  view.dispatch({ changes: { from: main.from, to: main.to, insert: existing[1] } });
-  view.focus();
+  const lines = lineRanges(view, main.from, main.to);
+  let caret = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const { from, to } = lines[i];
+    const seg = view.state.sliceDoc(from, to);
+    const existing = seg.match(anyStylePattern(prop));
+    if (!existing) continue;
+    view.dispatch({ changes: { from, to, insert: existing[1] } });
+    if (caret === null) caret = from + existing[1].length;
+  }
+  setCaret(view, caret ?? main.to);
+}
+function lineRanges(view, from, to) {
+  const first = view.state.doc.lineAt(from);
+  const last = view.state.doc.lineAt(to);
+  const out = [];
+  for (let n = first.number; n <= last.number; n++) {
+    const line = view.state.doc.line(n);
+    out.push({
+      from: n === first.number ? Math.max(from, line.from) : line.from,
+      to: n === last.number ? Math.min(to, line.to) : line.to
+    });
+  }
+  return out;
 }
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1085,11 +1213,13 @@ var TOOLS = {
   connect: { id: "connect", zh: "\u8FDE\u7EBF", en: "Connect", key: "C" },
   note: { id: "note", zh: "\u7B14\u8BB0\u5361", en: "Note card", key: "N" },
   text: { id: "text", zh: "\u6587\u5B57", en: "Text", key: "T" },
+  todo: { id: "todo", zh: "\u5F85\u529E", en: "To-do", key: "D" },
   mindmap: { id: "mindmap", zh: "\u601D\u7EF4\u5BFC\u56FE", en: "Mindmap", key: "M" },
   section: { id: "section", zh: "\u5206\u533A", en: "Section", key: "G" }
 };
 var MENU = {
   color: { zh: "\u989C\u8272", en: "Color" },
+  cardBg: { zh: "\u5361\u7247\u5E95\u8272", en: "Card background" },
   remove: { zh: "\u79FB\u9664", en: "Remove" },
   fold: { zh: "\u6298\u53E0", en: "Fold" },
   unfold: { zh: "\u5C55\u5F00", en: "Unfold" },
@@ -1097,6 +1227,7 @@ var MENU = {
 };
 var DEFAULTS = {
   noteCard: "Note Card",
+  todo: "- [ ] ",
   section: "Section",
   mindmapRoot: "Mindmap",
   text: ""
@@ -1115,6 +1246,7 @@ var ICONS = {
   note: `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="4.8" y="4.5" width="14.4" height="15" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 9.2h8M8 12.4h8M8 15.6h4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   text: `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M6 7.2h12M12 7.2v10.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`,
   mindmap: `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="8.4" y="3.6" width="7.2" height="4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.4" y="16.4" width="6.4" height="4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="14.2" y="16.4" width="6.4" height="4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 7.6v4.2M6.6 16.4v-2.2h10.8v2.2M12 11.8v2.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+  todo: `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M4.2 6.6l1.5 1.5 2.7-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.2 6.4h8.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.2 13.9l1.5 1.5 2.7-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.2 13.7h8.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.2 20.2h15.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".45"/></svg>`,
   section: `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="3.8" y="5.6" width="16.4" height="12.8" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3.2 2.6"/></svg>`
 };
 
@@ -1127,7 +1259,7 @@ var CanvasToolbar = class {
     this.el.className = "jce-toolbar";
     this.el.setAttribute("role", "toolbar");
     this.el.setAttribute("aria-label", "Canvas \u589E\u5F3A");
-    const order = ["select", "connect", "note", "text", "mindmap", "section"];
+    const order = ["select", "connect", "note", "text", "todo", "mindmap", "section"];
     order.forEach((id, index) => {
       if (index === 2) {
         const sep = document.createElement("div");
@@ -1167,7 +1299,7 @@ var CanvasToolbar = class {
 };
 
 // src/menus.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 var PALETTE = [
   { id: "", label: "\u9ED8\u8BA4 / Default", swatch: "#d8d8d8" },
   { id: "1", label: "\u7EA2 / Red", swatch: "#fb464c" },
@@ -1230,7 +1362,7 @@ var ContextMenus = class {
     evt.stopPropagation();
     this.hide();
     const node = nodeFromWrapper(canvas, target);
-    const menu = new import_obsidian.Menu();
+    const menu = new import_obsidian2.Menu();
     if (node) this.buildObjectMenu(menu, canvas, node);
     else this.buildBlankMenu(menu, canvas, canvas.posFromEvt(evt));
     this.open = menu;
@@ -1259,6 +1391,19 @@ var ContextMenus = class {
         );
       }
     });
+    if (kindOf(node) === "note") {
+      menu.addItem((item) => {
+        item.setTitle(menuLabel(MENU.cardBg)).setIcon("paint-bucket");
+        const sub = item.setSubmenu?.();
+        const target = sub ?? menu;
+        const current = cardBgOf(node);
+        for (const bg of CARD_BG_PALETTE) {
+          target.addItem(
+            (row) => row.setTitle(menuLabel(bg)).setChecked(current === bg.value).onClick(() => this.handlers.setCardBg(canvas, node.id, bg.value))
+          );
+        }
+      });
+    }
     menu.addItem(
       (item) => item.setTitle(menuLabel(MENU.remove)).setIcon("trash").onClick(() => this.handlers.remove(canvas, node.id))
     );
@@ -1300,6 +1445,7 @@ function nodeFromWrapper(canvas, target) {
 }
 
 // src/objects.ts
+var import_view2 = require("@codemirror/view");
 function createObject(chrome, opts) {
   const { canvas, kind } = opts;
   const size = KIND_SIZE[kind];
@@ -1315,8 +1461,8 @@ function createObject(chrome, opts) {
     });
     if (node) tag(canvas, node, "section");
   } else {
-    const text = kind === "note" ? `# ${DEFAULTS.noteCard}
-` : kind === "mindmap" ? DEFAULTS.mindmapRoot : DEFAULTS.text;
+    const text = opts.text ?? (kind === "note" ? `# ${DEFAULTS.noteCard}
+` : kind === "mindmap" ? DEFAULTS.mindmapRoot : DEFAULTS.text);
     node = canvas.createTextNode({ pos, size, text, focus: false, save: true });
     if (node) {
       tag(canvas, node, kind);
@@ -1331,6 +1477,9 @@ function createObject(chrome, opts) {
   chrome.invalidate(canvas);
   if (kind !== "section" && opts.startEditing !== false) {
     startEditingWhenReady(canvas, node);
+    if (opts.caretAtEnd && typeof opts.text === "string") {
+      keepCaretAtEnd(canvas, node, opts.text);
+    }
   } else {
     canvas.selectOnly(node);
   }
@@ -1368,6 +1517,42 @@ function startEditingWhenReady(canvas, node, tries = 0) {
       if (!live.isEditing) startEditingWhenReady(canvas, live, tries + 1);
     });
   }
+}
+function keepCaretAtEnd(canvas, node, expected) {
+  for (const delay of [250, 600, 1e3, 1400]) {
+    window.setTimeout(() => {
+      const live = canvas.nodes.get(node.id);
+      if (!live?.isEditing) return;
+      const view = cmView(live);
+      if (!view || view.state.doc.toString() !== expected) return;
+      placeCaretAtEnd(live);
+    }, delay);
+  }
+}
+function cmView(node) {
+  const content = node.nodeEl?.querySelector("iframe")?.contentDocument?.querySelector(".cm-content");
+  if (!(content instanceof HTMLElement)) return null;
+  try {
+    return import_view2.EditorView.findFromDOM(content);
+  } catch {
+    return null;
+  }
+}
+function placeCaretAtEnd(node) {
+  const frame = node.nodeEl?.querySelector("iframe");
+  const doc = frame?.contentDocument;
+  const content = doc?.querySelector(".cm-content");
+  if (!(content instanceof HTMLElement)) return false;
+  const view = import_view2.EditorView.findFromDOM(content);
+  if (view && typeof view.focus === "function") view.focus();
+  const selection = doc?.getSelection();
+  if (!doc || !selection) return false;
+  const range = doc.createRange();
+  range.selectNodeContents(content);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
 }
 
 // src/mindmap.ts
@@ -1568,6 +1753,122 @@ function activeCanvasView(plugin) {
   return view.canvas ?? null;
 }
 
+// src/todo.ts
+var import_view3 = require("@codemirror/view");
+var TASK_LINE = /^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/;
+var TodoController = class {
+  constructor(plugin) {
+    this.plugin = plugin;
+  }
+  /**
+   * Window-level capture: Obsidian's canvas selects the node on pointerdown
+   * before a preview checkbox could react, so the check has to be intercepted
+   * first and the event stopped.
+   */
+  onPointerDown(evt) {
+    const hit = this.hit(evt);
+    if (!hit) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    this.toggle(hit.canvas, hit.node, hit.index);
+  }
+  /** The reading-view checkbox writes back through a click handler; without
+   *  this it re-saves the stale line right after our toggle. */
+  onClick(evt) {
+    if (!this.hit(evt)) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+  }
+  /** `[ ]`/`[]` + space at the start of a line becomes a task item. */
+  onKeyDown(evt, doc) {
+    if (evt.key !== " " || evt.metaKey || evt.ctrlKey || evt.altKey || evt.isComposing) return false;
+    const content = doc.querySelector(".cm-content");
+    if (!(content instanceof HTMLElement)) return false;
+    const view = findView2(content);
+    if (!view) return false;
+    const sel = view.state.selection.main;
+    if (!sel.empty) return false;
+    const line = view.state.doc.lineAt(sel.head);
+    const before = view.state.sliceDoc(line.from, sel.head);
+    const match = before.match(/^(\s*)\[\s?\]$/);
+    if (!match) return false;
+    evt.preventDefault();
+    const insert = `${match[1]}- [ ] `;
+    view.dispatch({
+      changes: { from: line.from, to: sel.head, insert },
+      selection: { anchor: line.from + insert.length }
+    });
+    return true;
+  }
+  hit(evt) {
+    if (evt instanceof MouseEvent && evt.button !== 0) return null;
+    const target = evt.target;
+    let input = target instanceof HTMLInputElement && target.classList.contains("task-list-item-checkbox") ? target : null;
+    if (!input) {
+      if (!target?.classList?.contains("canvas-node-content-blocker") || !(evt instanceof MouseEvent)) return null;
+      const found = document.elementsFromPoint(evt.clientX, evt.clientY).find(
+        (el) => el instanceof HTMLInputElement && el.classList.contains("task-list-item-checkbox")
+      );
+      input = found ?? null;
+    }
+    if (!input || input.type !== "checkbox") return null;
+    if (!input.closest(".markdown-preview-view") || input.closest(".cm-editor")) return null;
+    const wrapper = input.closest(".canvas-wrapper");
+    if (!(wrapper instanceof HTMLElement)) return null;
+    const canvas = this.canvasFor(wrapper);
+    if (!canvas) return null;
+    const node = this.nodeFor(canvas, input);
+    if (!node) return null;
+    if (node.getData().type !== "text") return null;
+    const item = input.closest("li.task-list-item");
+    const items = Array.from(node.nodeEl.querySelectorAll("li.task-list-item"));
+    const index = item ? items.indexOf(item) : -1;
+    if (index < 0) return null;
+    return { canvas, node, index };
+  }
+  toggle(canvas, node, taskIndex) {
+    const data = node.getData();
+    const text = typeof data.text === "string" ? data.text : "";
+    const lines = text.split("\n");
+    let seen = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(TASK_LINE);
+      if (!match) continue;
+      seen += 1;
+      if (seen !== taskIndex) continue;
+      const done = match[2].toLowerCase() === "x";
+      lines[i] = lines[i].replace(TASK_LINE, `$1[${done ? " " : "x"}]`);
+      node.setData({ ...data, text: lines.join("\n") });
+      node.render?.();
+      commit(canvas);
+      return;
+    }
+  }
+  canvasFor(wrapper) {
+    for (const leaf of this.plugin.app.workspace.getLeavesOfType("canvas")) {
+      const canvas = leaf.view.canvas;
+      if (canvas?.wrapperEl === wrapper) return canvas;
+    }
+    return null;
+  }
+  nodeFor(canvas, target) {
+    const el = target.closest(".canvas-node");
+    if (!(el instanceof HTMLElement)) return null;
+    for (const node of canvas.nodes.values()) {
+      if (node.nodeEl === el || node.nodeEl.contains(el)) return node;
+    }
+    return null;
+  }
+};
+function findView2(el) {
+  try {
+    const view = import_view3.EditorView.findFromDOM(el);
+    if (view && view.state?.selection) return view;
+  } catch {
+  }
+  return null;
+}
+
 // src/main.ts
 var TOOL_KEYS = {
   v: "select",
@@ -1575,9 +1876,10 @@ var TOOL_KEYS = {
   n: "note",
   t: "text",
   m: "mindmap",
-  g: "section"
+  g: "section",
+  d: "todo"
 };
-var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
+var CanvasEnhancePlugin = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.toolbars = /* @__PURE__ */ new Map();
@@ -1589,6 +1891,7 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
     this.chrome = new Chrome(this, (canvas) => this.hookFrames(canvas));
     this.mindmap = new MindmapController(this, this.chrome);
     this.formats = new FormatBar(this);
+    this.todo = new TodoController(this);
     this.connect = new ConnectTool(this);
     this.menus = new ContextMenus(this, {
       create: (canvas, kind, at) => {
@@ -1598,6 +1901,7 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
       },
       remove: (canvas, nodeId) => this.removeNode(canvas, nodeId),
       setColor: (canvas, nodeId, color) => this.setColor(canvas, nodeId, color),
+      setCardBg: (canvas, nodeId, color) => this.setCardBg(canvas, nodeId, color),
       rotate: (canvas, nodeId) => this.mindmap.rotate(canvas, nodeId),
       setFolded: (canvas, nodeId, folded) => this.mindmap.setFolded(canvas, nodeId, folded)
     });
@@ -1605,6 +1909,8 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.sync()));
     this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.sync(), 60)));
     this.registerDomEvent(document, "keydown", (evt) => this.onKey(evt), true);
+    this.registerDomEvent(window, "pointerdown", (evt) => this.todo.onPointerDown(evt), true);
+    this.registerDomEvent(window, "click", (evt) => this.todo.onClick(evt), true);
     this.registerDomEvent(document, "pointermove", (evt) => this.onPointerMove(evt), true);
     this.registerDomEvent(
       document,
@@ -1710,6 +2016,7 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
         doc.addEventListener(
           "keydown",
           (evt) => {
+            if (this.todo.onKeyDown(evt, doc)) return;
             if (evt.key !== "Tab" || evt.metaKey || evt.ctrlKey || evt.altKey) return;
             const owner = nodeById(canvas, node.id);
             if (!owner || !isMindmap(owner)) return;
@@ -1746,6 +2053,10 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
       return;
     }
     this.connect.exit();
+    if (tool === "todo") {
+      this.setPlacing({ canvas, kind: "note", text: DEFAULTS.todo });
+      return;
+    }
     this.setPlacing({ canvas, kind: tool });
   }
   setPlacing(next) {
@@ -1762,7 +2073,13 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
     evt.preventDefault();
     evt.stopPropagation();
     const at = placing.canvas.posFromEvt(evt);
-    createObject(this.chrome, { canvas: placing.canvas, kind: placing.kind, at });
+    createObject(this.chrome, {
+      canvas: placing.canvas,
+      kind: placing.kind,
+      at,
+      text: placing.text,
+      caretAtEnd: !!placing.text
+    });
     this.setPlacing(null);
     this.setActive(placing.canvas, "select");
   }
@@ -1812,10 +2129,13 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
     this.onTool(canvas, tool);
     if (tool !== "select" && tool !== "connect") {
       this.setPlacing(null);
+      const kind = tool === "todo" ? "note" : tool;
       createObject(this.chrome, {
         canvas,
-        kind: tool,
-        at: viewportCenter(canvas, KIND_SIZE[tool])
+        kind,
+        at: viewportCenter(canvas, KIND_SIZE[kind]),
+        text: tool === "todo" ? DEFAULTS.todo : void 0,
+        caretAtEnd: tool === "todo"
       });
       this.setActive(canvas, "select");
     }
@@ -1854,6 +2174,19 @@ var CanvasEnhancePlugin = class extends import_obsidian2.Plugin {
     const next = { ...node.getData() };
     if (color) next.color = color;
     else delete next.color;
+    node.setData(next);
+    this.chrome.paintNode(node);
+    this.chrome.invalidate(canvas);
+    commit(canvas);
+  }
+  /** Note-card background lives in the .canvas file (`jceBg`), so it survives
+   *  restarts and travels with the file. */
+  setCardBg(canvas, nodeId, color) {
+    const node = canvas.nodes.get(nodeId);
+    if (!node || kindOf(node) !== "note") return;
+    const next = { ...node.getData() };
+    if (color) next[CARD_BG] = color;
+    else delete next[CARD_BG];
     node.setData(next);
     this.chrome.paintNode(node);
     this.chrome.invalidate(canvas);

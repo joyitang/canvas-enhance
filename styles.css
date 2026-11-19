@@ -77,19 +77,20 @@
   margin-top: 0;
 }
 
-/* ------------------------------------------------------------- format bar */
+/* ------------------------------------------------------------- format bar
+ * Same run of tools as the approved prototype / Heptabase: a single flat white
+ * strip, hairline separators, glyphs that actually look like what they do.
+ */
 
 .jce-format-bar {
   position: fixed;
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 10px;
+  padding: 5px 6px;
+  border-radius: 9px;
   background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 3px 15px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 .jce-format-bar[hidden] {
@@ -98,19 +99,28 @@
 
 .jce-format-row {
   display: flex;
-  gap: 1px;
+  align-items: center;
+  gap: 2px;
+}
+
+.jce-format-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--background-modifier-border);
 }
 
 .jce-format-btn {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
   padding: 0;
   border: none;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-normal);
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -119,19 +129,90 @@
   box-shadow: none;
 }
 
-.jce-format-btn:hover {
+.jce-format-btn:hover,
+.jce-format-btn:focus-visible {
   background: var(--background-modifier-hover);
 }
 
-.jce-format-btn.is-on {
-  color: var(--jce-accent);
+.jce-format-btn:active {
+  background: var(--background-modifier-active-hover, var(--background-modifier-hover));
+}
+
+.jce-fmt-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.jce-fmt-glyph-bold {
+  font-weight: 800;
+}
+
+.jce-fmt-glyph-italic {
+  font-style: italic;
+  font-family: "Times New Roman", Georgia, serif;
+  font-size: 17px;
+}
+
+.jce-fmt-glyph-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.jce-fmt-glyph-strike {
+  text-decoration: line-through;
+}
+
+.jce-fmt-glyph-code {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  letter-spacing: -0.5px;
+}
+
+.jce-fmt-glyph-highlight {
+  background: #f6e68f;
+  color: #3f3600;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.jce-fmt-glyph-link,
+.jce-fmt-glyph-math {
+  font-size: 16px;
+}
+
+.jce-fmt-glyph-color {
+  border-bottom: 3px solid #339267;
+  padding: 0 1px;
+  line-height: 17px;
+  font-size: 14px;
+}
+
+.jce-fmt-glyph-bg {
+  font-size: 15px;
+}
+
+.jce-format-btn.jce-fmt-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
 }
 
 .jce-format-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
   display: flex;
-  gap: 4px;
-  padding: 4px;
+  gap: 6px;
+  padding: 6px;
   align-items: center;
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 .jce-format-pop[hidden] {
@@ -152,18 +233,22 @@
 
 .jce-format-swatches {
   flex-wrap: wrap;
-  max-width: 190px;
+  max-width: 198px;
 }
 
 .jce-swatch {
-  width: 20px;
-  height: 20px;
-  min-width: 20px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
   padding: 0;
   border-radius: 5px;
   border: 1px solid var(--background-modifier-border);
   box-shadow: none;
   cursor: pointer;
+}
+
+.jce-swatch:hover {
+  transform: scale(1.08);
 }
 
 .jce-swatch.is-clear {
@@ -369,6 +454,20 @@
 }
 
 /* ------------------------------------------------------------ interaction */
+
+/* In-card to-dos: the preview checkbox is clickable through the plugin, so it
+ * gets a pointer cursor; completed items go grey + struck through (Heptabase). */
+.canvas-wrapper .canvas-node input.task-list-item-checkbox {
+  cursor: pointer;
+}
+
+.canvas-wrapper .canvas-node .task-list-item.is-checked,
+.canvas-wrapper .canvas-node .task-list-item[data-task="x"],
+.canvas-wrapper .canvas-node .task-list-item[data-task="X"] {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
 
 .canvas-wrapper.jce-placing {
   cursor: crosshair;

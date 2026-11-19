@@ -10,12 +10,21 @@
 import { Menu, type Plugin } from "obsidian";
 import { CanvasLike, NodeLike, Point, isInsideCanvasUi } from "./bridge";
 import { MENU, TOOLS, menuLabel } from "./copy";
-import { Kind, hasChildren, isFolded, isMindmap } from "./model";
+import {
+  CARD_BG_PALETTE,
+  Kind,
+  cardBgOf,
+  hasChildren,
+  isFolded,
+  isMindmap,
+  kindOf,
+} from "./model";
 
 type Handlers = {
   create: (canvas: CanvasLike, kind: Kind, at?: Point) => void;
   remove: (canvas: CanvasLike, nodeId: string) => void;
   setColor: (canvas: CanvasLike, nodeId: string, color: string) => void;
+  setCardBg: (canvas: CanvasLike, nodeId: string, color: string) => void;
   rotate: (canvas: CanvasLike, nodeId: string) => void;
   setFolded: (canvas: CanvasLike, nodeId: string, folded: boolean) => void;
 };
@@ -134,6 +143,25 @@ export class ContextMenus {
         );
       }
     });
+
+    // Card background is a note-card-only property (PRD NOTE-01, extended by
+    // JOY 2026-11-19). Native cards keep Obsidian's own colour logic.
+    if (kindOf(node) === "note") {
+      menu.addItem((item) => {
+        item.setTitle(menuLabel(MENU.cardBg)).setIcon("paint-bucket");
+        const sub = (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
+        const target: Menu = sub ?? menu;
+        const current = cardBgOf(node);
+        for (const bg of CARD_BG_PALETTE) {
+          target.addItem((row) =>
+            row
+              .setTitle(menuLabel(bg))
+              .setChecked(current === bg.value)
+              .onClick(() => this.handlers.setCardBg(canvas, node.id, bg.value))
+          );
+        }
+      });
+    }
 
     menu.addItem((item) =>
       item

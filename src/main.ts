@@ -23,8 +23,9 @@ import { CanvasToolbar } from "./toolbar";
 import { ContextMenus } from "./menus";
 import { MindmapController } from "./mindmap";
 import { createObject } from "./objects";
-import { ToolId, TOOLS } from "./copy";
-import { Kind, isMindmap, kindOf, rootIdOf, treeOf, descendantsOf } from "./model";
+import { TodoController } from "./todo";
+import { DEFAULTS, ToolId, TOOLS } from "./copy";
+import { Kind, isMindmap, kindOf, rootIdOf, treeOf, descendantsOf, CARD_BG } from "./model";
 import { viewportCenter } from "./bridge";
 import { KIND_SIZE } from "./layout";
 
@@ -35,6 +36,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
   t: "text",
   m: "mindmap",
   g: "section",
+  d: "todo",
 };
 
 export default class CanvasEnhancePlugin extends Plugin {
@@ -43,9 +45,10 @@ export default class CanvasEnhancePlugin extends Plugin {
   private formats!: FormatBar;
   private connect!: ConnectTool;
   private menus!: ContextMenus;
+  private todo!: TodoController;
 
   private toolbars = new Map<CanvasLike, CanvasToolbar>();
-  private placing: { canvas: CanvasLike; kind: Kind } | null = null;
+  private placing: { canvas: CanvasLike; kind: Kind; text?: string } | null = null;
   private hookedDocs = new WeakSet<Document>();
   private frameHooks = new WeakSet<CanvasLike>();
 
@@ -53,6 +56,7 @@ export default class CanvasEnhancePlugin extends Plugin {
     this.chrome = new Chrome(this, (canvas) => this.hookFrames(canvas));
     this.mindmap = new MindmapController(this, this.chrome);
     this.formats = new FormatBar(this);
+    this.todo = new TodoController(this);
     this.connect = new ConnectTool(this);
     this.menus = new ContextMenus(this, {
       create: (canvas, kind, at) => {
@@ -62,6 +66,7 @@ export default class CanvasEnhancePlugin extends Plugin {
       },
       remove: (canvas, nodeId) => this.removeNode(canvas, nodeId),
       setColor: (canvas, nodeId, color) => this.setColor(canvas, nodeId, color),
+      setCardBg: (canvas, nodeId, color) => this.setCardBg(canvas, nodeId, color),
       rotate: (canvas, nodeId) => this.mindmap.rotate(canvas, nodeId),
       setFolded: (canvas, nodeId, folded) => this.mindmap.setFolded(canvas, nodeId, folded),
     });
@@ -71,6 +76,10 @@ export default class CanvasEnhancePlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.sync(), 60)));
 
     this.registerDomEvent(document, "keydown", (evt) => this.onKey(evt), true);
+    // Window capture: a preview checkbox must win over the canvas node
+    // selection, which would otherwise swallow the click.
+    this.registerDomEvent(window, "pointerdown", (evt) => this.todo.onPointerDown(evt), true);
+    this.registerDomEvent(window, "click", (evt) => this.todo.onClick(evt), true);
     this.registerDomEvent(document, "pointermove", (evt) => this.onPointerMove(evt), true);
     this.registerDomEvent(
       document,
@@ -185,6 +194,7 @@ export default class CanvasEnhancePlugin extends Plugin {
         doc.addEventListener(
           "keydown",
           (evt) => {
+            if (this.todo.onKeyDown(evt, doc)) return;
             if (evt.key !== "Tab" || evt.metaKey || evt.ctrlKey || evt.altKey) return;
             const owner = nodeById(canvas, node.id);
             if (!owner || !isMindmap(owner)) return;
@@ -225,10 +235,15 @@ export default class CanvasEnhancePlugin extends Plugin {
       return;
     }
     this.connect.exit();
+    if (tool === "todo") {
+      // A to-do is a note card that starts life as one empty task.
+      this.setPlacing({ canvas, kind: "note", text: DEFAULTS.todo });
+      return;
+    }
     this.setPlacing({ canvas, kind: tool });
   }
 
-  private setPlacing(next: { canvas: CanvasLike; kind: Kind } | null): void {
+  private setPlacing(next: { canvas: CanvasLike; kind: Kind; text?: string } | null): void {
     if (this.placing) this.placing.canvas.wrapperEl.classList.remove("jce-placing");
     this.placing = next;
     if (next) next.canvas.wrapperEl.classList.add("jce-placing");
@@ -244,7 +259,13 @@ export default class CanvasEnhancePlugin extends Plugin {
     evt.stopPropagation();
 
     const at = placing.canvas.posFromEvt(evt as MouseEvent);
-    createObject(this.chrome, { canvas: placing.canvas, kind: placing.kind, at });
+    createObject(this.chrome, {
+      canvas: placing.canvas,
+      kind: placing.kind,
+      at,
+      text: placing.text,
+      caretAtEnd: !!placing.text,
+    });
     this.setPlacing(null);
     this.setActive(placing.canvas, "select");
   }
@@ -303,10 +324,13 @@ export default class CanvasEnhancePlugin extends Plugin {
     this.onTool(canvas, tool);
     if (tool !== "select" && tool !== "connect") {
       this.setPlacing(null);
+      const kind: Kind = tool === "todo" ? "note" : tool;
       createObject(this.chrome, {
         canvas,
-        kind: tool,
-        at: viewportCenter(canvas, KIND_SIZE[tool]),
+        kind,
+        at: viewportCenter(canvas, KIND_SIZE[kind]),
+        text: tool === "todo" ? DEFAULTS.todo : undefined,
+        caretAtEnd: tool === "todo",
       });
       this.setActive(canvas, "select");
     }
@@ -348,6 +372,20 @@ export default class CanvasEnhancePlugin extends Plugin {
     const next = { ...node.getData() };
     if (color) next.color = color;
     else delete next.color;
+    node.setData(next);
+    this.chrome.paintNode(node);
+    this.chrome.invalidate(canvas);
+    commit(canvas);
+  }
+
+  /** Note-card background lives in the .canvas file (`jceBg`), so it survives
+   *  restarts and travels with the file. */
+  private setCardBg(canvas: CanvasLike, nodeId: string, color: string): void {
+    const node = canvas.nodes.get(nodeId);
+    if (!node || kindOf(node) !== "note") return;
+    const next = { ...node.getData() };
+    if (color) next[CARD_BG] = color;
+    else delete next[CARD_BG];
     node.setData(next);
     this.chrome.paintNode(node);
     this.chrome.invalidate(canvas);

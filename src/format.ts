@@ -1,7 +1,7 @@
 /**
  * format.ts — text-selection format bar (PRD §6).
  *
- * Two details drive the design:
+ * Three details drive the design:
  *
  * 1. Canvas text nodes are edited inside a same-origin iframe that Obsidian
  *    recreates for every edit session. We therefore resolve the CodeMirror
@@ -10,10 +10,16 @@
  * 2. The canvas scales that iframe with a CSS transform, so an inner rect must
  *    be mapped to screen space through the iframe's actual scale ratio.
  *    Ignoring that ratio is what puts the bar in the wrong place when zoomed.
+ * 3. Obsidian's Live Preview reveals inline Markdown markers on the line that
+ *    holds the selection. If we leave the text selected after applying a
+ *    format, the user sees `==text==` instead of a highlight. Collapsing the
+ *    caret just past the closing marker puts it outside that range, so the
+ *    card renders the result immediately — which is the whole point of the
+ *    bar.
  */
 
 import { EditorView } from "@codemirror/view";
-import type { Plugin } from "obsidian";
+import { setIcon, type Plugin } from "obsidian";
 import { CanvasLike } from "./bridge";
 
 type FormatId =
@@ -28,17 +34,24 @@ type FormatId =
   | "color"
   | "bg";
 
-const BUTTONS: { id: FormatId; glyph: string; label: string }[] = [
-  { id: "bold", glyph: "B", label: "粗体 / Bold" },
-  { id: "italic", glyph: "I", label: "斜体 / Italic" },
-  { id: "underline", glyph: "U", label: "下划线 / Underline" },
-  { id: "code", glyph: "</>", label: "行内代码 / Inline code" },
-  { id: "highlight", glyph: "H", label: "高亮 / Highlight" },
-  { id: "strike", glyph: "S", label: "删除线 / Strikethrough" },
-  { id: "link", glyph: "↗", label: "链接 / Link" },
-  { id: "math", glyph: "∑", label: "数学 / Math" },
-  { id: "color", glyph: "A", label: "文字颜色 / Text color" },
-  { id: "bg", glyph: "▧", label: "背景色 / Background color" },
+type Button = { id: FormatId; glyph: string; label: string; group: number };
+
+/**
+ * Order follows the approved prototype: B I U </> H S ↗ ∑ A ▧.
+ * `group` only drives the separators — Heptabase keeps the same run of tools
+ * in one strip, so the separators stay hairline-thin.
+ */
+const BUTTONS: Button[] = [
+  { id: "bold", glyph: "B", label: "粗体 / Bold  ⌘B", group: 0 },
+  { id: "italic", glyph: "I", label: "斜体 / Italic  ⌘I", group: 0 },
+  { id: "underline", glyph: "U", label: "下划线 / Underline  ⌘U", group: 0 },
+  { id: "code", glyph: "</>", label: "行内代码 / Inline code", group: 1 },
+  { id: "highlight", glyph: "H", label: "高亮 / Highlight", group: 1 },
+  { id: "strike", glyph: "S", label: "删除线 / Strikethrough", group: 0 },
+  { id: "link", glyph: "↗", label: "链接 / Link  ⌘K", group: 2 },
+  { id: "math", glyph: "∑", label: "数学 / Math", group: 2 },
+  { id: "color", glyph: "A", label: "文字颜色 / Text color", group: 3 },
+  { id: "bg", glyph: "", label: "文字背景色 / Background color", group: 3 },
 ];
 
 const TEXT_COLORS = ["#111111", "#6b6b6b", "#c0392b", "#d35400", "#1e8449", "#1a5276", "#6c3483"];
@@ -66,7 +79,7 @@ export class FormatBar {
     this.colorBox.className = "jce-format-pop jce-format-swatches";
     this.colorBox.hidden = true;
     this.linkBox = document.createElement("div");
-    this.linkBox.className = "jce-format-pop";
+    this.linkBox.className = "jce-format-pop jce-format-link";
     this.linkBox.hidden = true;
     this.linkInput = document.createElement("input");
     this.build();
@@ -91,14 +104,32 @@ export class FormatBar {
   private build(): void {
     const row = document.createElement("div");
     row.className = "jce-format-row";
+    let group = -1;
     for (const btn of BUTTONS) {
+      if (group !== -1 && btn.group !== group) {
+        const sep = document.createElement("span");
+        sep.className = "jce-format-sep";
+        row.appendChild(sep);
+      }
+      group = btn.group;
+
       const el = document.createElement("button");
       el.type = "button";
-      el.className = "jce-format-btn";
+      el.className = `jce-format-btn jce-fmt-${btn.id}`;
       el.dataset.fmt = btn.id;
       el.title = btn.label;
       el.setAttribute("aria-label", btn.label);
-      el.textContent = btn.glyph;
+      if (btn.id === "bg") {
+        // A paint bucket reads as "fill / background" far better than the
+        // half-shaded square the prototype used.
+        el.classList.add("jce-fmt-icon");
+        setIcon(el, "paint-bucket");
+      } else {
+        const glyph = document.createElement("span");
+        glyph.className = `jce-fmt-glyph jce-fmt-glyph-${btn.id}`;
+        glyph.textContent = btn.glyph;
+        el.appendChild(glyph);
+      }
       el.addEventListener("mousedown", (evt) => evt.preventDefault());
       el.addEventListener("click", (evt) => {
         evt.preventDefault();
@@ -167,18 +198,13 @@ export class FormatBar {
       const view = findView(content as HTMLElement);
       if (view && !view.state.selection.main.empty) return { view, frame };
     }
-
-    // Fallback: an inline CodeMirror editor (future/no-iframe rendering).
-    const active = document.activeElement;
-    const view = active instanceof HTMLElement ? findView(active) : null;
-    if (view && !view.state.selection.main.empty) return { view, frame: null };
     return null;
   }
 
   private frames(): HTMLIFrameElement[] {
     const canvas = this.activeCanvas();
-    const root = canvas?.canvasEl ?? document;
-    return Array.from(root.querySelectorAll<HTMLIFrameElement>(".canvas-node iframe"));
+    if (!canvas) return [];
+    return Array.from(canvas.canvasEl.querySelectorAll<HTMLIFrameElement>(".canvas-node iframe"));
   }
 
   private activeCanvas(): CanvasLike | null {
@@ -251,11 +277,17 @@ export class FormatBar {
   private place(rect: DOMRect): void {
     const width = this.el.offsetWidth;
     const height = this.el.offsetHeight;
-    const left = Math.min(
-      window.innerWidth - width - 8,
-      Math.max(8, rect.left + rect.width / 2 - width / 2)
-    );
-    const top = Math.max(8, rect.top - height - 8);
+    // The floating tool bar owns the left edge of the canvas; a centred bar
+    // for a card near that edge would sit on top of it.
+    const canvas = this.activeCanvas();
+    const leftEdge = canvas ? canvas.wrapperEl.getBoundingClientRect().left : 0;
+    const minLeft = leftEdge > 0 ? leftEdge + 76 : 8;
+    const centered = rect.left + rect.width / 2 - width / 2;
+    const left = Math.min(window.innerWidth - width - 8, Math.max(minLeft, centered));
+    // Above the selection by default; below it when there is no room
+    // (Heptabase flips too, instead of clipping the bar at the window edge).
+    let top = rect.top - height - 8;
+    if (top < 8) top = Math.min(window.innerHeight - height - 8, rect.bottom + 8);
     this.el.style.left = `${Math.round(left)}px`;
     this.el.style.top = `${Math.round(top)}px`;
   }
@@ -365,12 +397,7 @@ export class FormatBar {
       swatch.addEventListener("click", (evt) => {
         evt.preventDefault();
         if (hex === "clear") clearStyle(target.view, kind === "color" ? "color" : "background-color");
-        else
-          wrapStyle(
-            target.view,
-            kind === "color" ? "color" : "background-color",
-            hex
-          );
+        else wrapStyle(target.view, kind === "color" ? "color" : "background-color", hex);
         this.colorBox.hidden = true;
         this.schedule();
       });
@@ -391,27 +418,100 @@ function findView(el: HTMLElement): EditorView | null {
   return null;
 }
 
+/** Apply an inline pair to every selected line, then park the caret outside
+ *  the last inserted range so Live Preview stops showing the markers. */
 function toggleWrap(view: EditorView, left: string, right: string): void {
-  const main = view.state.selection.main;
-  const text = view.state.sliceDoc(main.from, main.to);
+  const { from, to } = view.state.selection.main;
+  const text = view.state.sliceDoc(from, to);
   if (!text) return;
-  if (text.length >= left.length + right.length && text.startsWith(left) && text.endsWith(right)) {
-    const inner = text.slice(left.length, text.length - right.length);
-    view.dispatch({
-      changes: { from: main.from, to: main.to, insert: inner },
-      selection: { anchor: main.from, head: main.from + inner.length },
-    });
-  } else {
-    const insert = left + text + right;
-    view.dispatch({
-      changes: { from: main.from, to: main.to, insert },
-      selection: {
-        anchor: main.from + left.length,
-        head: main.from + left.length + text.length,
-      },
-    });
+
+  if (!text.includes("\n")) {
+    const caret = toggleRange(view, from, to, left, right);
+    setCaret(view, caret);
+    return;
   }
+
+  // Multi-line: wrapping `a\nb` in one pair produces invalid Markdown, so
+  // every line is formatted on its own — this is also what Heptabase shows.
+  const first = view.state.doc.lineAt(from);
+  const last = view.state.doc.lineAt(to);
+  let caret: number | null = null;
+  for (let n = last.number; n >= first.number; n--) {
+    const line = view.state.doc.line(n);
+    const a = n === first.number ? Math.max(from, line.from) : line.from;
+    const b = n === last.number ? Math.min(to, line.to) : line.to;
+    if (!view.state.sliceDoc(a, b).trim()) continue;
+    const next = toggleRange(view, a, b, left, right);
+    // Bottom-up: the first line processed is the last line in the document,
+    // and that is where the caret should rest.
+    if (caret === null) caret = next;
+  }
+  setCaret(view, caret ?? to);
+}
+
+function setCaret(view: EditorView, pos: number): void {
+  const docLength = view.state.doc.length;
+  view.dispatch({ selection: { anchor: Math.max(0, Math.min(pos, docLength)) } });
   view.focus();
+}
+
+/** Wrap, unwrap or strip surrounding markers. Returns the caret position. */
+function toggleRange(
+  view: EditorView,
+  from: number,
+  to: number,
+  left: string,
+  right: string
+): number {
+  const text = view.state.sliceDoc(from, to);
+  const inner = unwrap(text, left, right);
+  if (inner !== null) {
+    view.dispatch({ changes: { from, to, insert: inner } });
+    return from + inner.length;
+  }
+
+  if (isMarker(view, from - left.length, left, -1) && isMarker(view, to, right, 1)) {
+    view.dispatch({
+      changes: [
+        { from: from - left.length, to: from, insert: "" },
+        { from: to, to: to + right.length, insert: "" },
+      ],
+    });
+    return from - left.length + text.length;
+  }
+
+  const insert = left + text + right;
+  view.dispatch({ changes: { from, to, insert } });
+  return from + insert.length;
+}
+
+function unwrap(text: string, left: string, right: string): string | null {
+  if (text.length <= left.length + right.length) return null;
+  if (!text.startsWith(left) || !text.endsWith(right)) return null;
+  return text.slice(left.length, text.length - right.length);
+}
+
+/** True when a marker run of `left` ends/starts exactly at `pos`. */
+function isMarker(view: EditorView, pos: number, marker: string, dir: 1 | -1): boolean {
+  if (pos < 0) return false;
+  const docLength = view.state.doc.length;
+  if (dir < 0) {
+    if (pos + marker.length > docLength) return false;
+    if (view.state.sliceDoc(pos, pos + marker.length) !== marker) return false;
+    // `*` must not be part of `**` starting one char earlier.
+    if (marker.length === 1 && pos > 0 && view.state.sliceDoc(pos - 1, pos) === marker) return false;
+    return true;
+  }
+  if (pos + marker.length > docLength) return false;
+  if (view.state.sliceDoc(pos, pos + marker.length) !== marker) return false;
+  if (
+    marker.length === 1 &&
+    pos + 1 < docLength &&
+    view.state.sliceDoc(pos + 1, pos + 2) === marker
+  ) {
+    return false;
+  }
+  return true;
 }
 
 const stylePattern = (prop: string, value: string) =>
@@ -424,29 +524,55 @@ function wrapStyle(view: EditorView, prop: string, value: string): void {
   const main = view.state.selection.main;
   const text = view.state.sliceDoc(main.from, main.to);
   if (!text) return;
-  const same = text.match(stylePattern(prop, value));
-  if (same) {
-    view.dispatch({ changes: { from: main.from, to: main.to, insert: same[1] } });
-    view.focus();
-    return;
+
+  const lines = lineRanges(view, main.from, main.to);
+  let caret: number | null = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const { from, to } = lines[i];
+    const seg = view.state.sliceDoc(from, to);
+    if (!seg.trim()) continue;
+    const same = seg.match(stylePattern(prop, value));
+    if (same) {
+      view.dispatch({ changes: { from, to, insert: same[1] } });
+      if (caret === null) caret = from + same[1].length;
+      continue;
+    }
+    const existing = seg.match(anyStylePattern(prop));
+    const inner = existing ? existing[1] : seg;
+    const insert = `<span style="${prop}: ${value}">${inner}</span>`;
+    view.dispatch({ changes: { from, to, insert } });
+    if (caret === null) caret = from + insert.length;
   }
-  const existing = text.match(anyStylePattern(prop));
-  const inner = existing ? existing[1] : text;
-  const insert = `<span style="${prop}: ${value}">${inner}</span>`;
-  view.dispatch({
-    changes: { from: main.from, to: main.to, insert },
-    selection: { anchor: main.from + insert.length },
-  });
-  view.focus();
+  setCaret(view, caret ?? main.to);
 }
 
 function clearStyle(view: EditorView, prop: string): void {
   const main = view.state.selection.main;
-  const text = view.state.sliceDoc(main.from, main.to);
-  const existing = text.match(anyStylePattern(prop));
-  if (!existing) return;
-  view.dispatch({ changes: { from: main.from, to: main.to, insert: existing[1] } });
-  view.focus();
+  const lines = lineRanges(view, main.from, main.to);
+  let caret: number | null = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const { from, to } = lines[i];
+    const seg = view.state.sliceDoc(from, to);
+    const existing = seg.match(anyStylePattern(prop));
+    if (!existing) continue;
+    view.dispatch({ changes: { from, to, insert: existing[1] } });
+    if (caret === null) caret = from + existing[1].length;
+  }
+  setCaret(view, caret ?? main.to);
+}
+
+function lineRanges(view: EditorView, from: number, to: number): { from: number; to: number }[] {
+  const first = view.state.doc.lineAt(from);
+  const last = view.state.doc.lineAt(to);
+  const out: { from: number; to: number }[] = [];
+  for (let n = first.number; n <= last.number; n++) {
+    const line = view.state.doc.line(n);
+    out.push({
+      from: n === first.number ? Math.max(from, line.from) : line.from,
+      to: n === last.number ? Math.min(to, line.to) : line.to,
+    });
+  }
+  return out;
 }
 
 function escapeRe(s: string): string {

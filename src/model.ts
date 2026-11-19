@@ -15,6 +15,26 @@ export const TAG = "jce";
 export const ROOT = "jceRoot";
 export const LAYOUT = "jceLayout";
 export const FOLD = "jceFold";
+/** Card background chosen from the object menu (note cards only). */
+export const CARD_BG = "jceBg";
+
+/** Soft palette in the spirit of Heptabase's card colours. */
+export const CARD_BG_PALETTE: { value: string; zh: string; en: string }[] = [
+  { value: "", zh: "默认", en: "Default" },
+  { value: "#ffffff", zh: "白", en: "White" },
+  { value: "#fbf7ee", zh: "奶油", en: "Cream" },
+  { value: "#fbf1c4", zh: "黄", en: "Yellow" },
+  { value: "#e3f1d9", zh: "绿", en: "Green" },
+  { value: "#dfeaf7", zh: "蓝", en: "Blue" },
+  { value: "#f8e1e4", zh: "粉", en: "Pink" },
+  { value: "#ece5f7", zh: "紫", en: "Purple" },
+  { value: "#eeeeee", zh: "灰", en: "Grey" },
+];
+
+export function cardBgOf(node: NodeLike): string {
+  const value = dataOf(node)[CARD_BG];
+  return typeof value === "string" ? value : "";
+}
 
 export type Layout = "TB" | "LR" | "BT" | "RL";
 

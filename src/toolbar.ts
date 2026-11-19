@@ -20,7 +20,7 @@ export class CanvasToolbar {
     this.el.setAttribute("role", "toolbar");
     this.el.setAttribute("aria-label", "Canvas 增强");
 
-    const order: ToolId[] = ["select", "connect", "note", "text", "mindmap", "section"];
+    const order: ToolId[] = ["select", "connect", "note", "text", "todo", "mindmap", "section"];
     order.forEach((id, index) => {
       if (index === 2) {
         const sep = document.createElement("div");

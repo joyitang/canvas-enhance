@@ -8,6 +8,7 @@ export const TOOLS = {
   connect: { id: "connect", zh: "连线", en: "Connect", key: "C" },
   note: { id: "note", zh: "笔记卡", en: "Note card", key: "N" },
   text: { id: "text", zh: "文字", en: "Text", key: "T" },
+  todo: { id: "todo", zh: "待办", en: "To-do", key: "D" },
   mindmap: { id: "mindmap", zh: "思维导图", en: "Mindmap", key: "M" },
   section: { id: "section", zh: "分区", en: "Section", key: "G" },
 } as const;
@@ -16,6 +17,7 @@ export type ToolId = keyof typeof TOOLS;
 
 export const MENU = {
   color: { zh: "颜色", en: "Color" },
+  cardBg: { zh: "卡片底色", en: "Card background" },
   remove: { zh: "移除", en: "Remove" },
   fold: { zh: "折叠", en: "Fold" },
   unfold: { zh: "展开", en: "Unfold" },
@@ -24,6 +26,7 @@ export const MENU = {
 
 export const DEFAULTS = {
   noteCard: "Note Card",
+  todo: "- [ ] ",
   section: "Section",
   mindmapRoot: "Mindmap",
   text: "",
